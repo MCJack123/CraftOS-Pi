@@ -1,4 +1,4 @@
-CIRCLESTDLIBHOME = /home/jack/Downloads/circle-stdlib
+CIRCLESTDLIBHOME ?= /home/jack/Downloads/circle-arch/raspi1
 include $(CIRCLESTDLIBHOME)/Config.mk
 
 CIRCLEHOME = $(CIRCLESTDLIBHOME)/libs/circle

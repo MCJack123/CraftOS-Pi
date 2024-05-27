@@ -92,7 +92,7 @@ private:
     CWPASupplicant          m_WPASupplicant;
     CDNSClient              m_DNSClient;
     CircleMbedTLS::CTLSSimpleSupport m_TLSSupport;
-    CPWMSoundBaseDevice    m_Sound;
+    CSoundBaseDevice       *m_Sound;
 };
 
 #endif

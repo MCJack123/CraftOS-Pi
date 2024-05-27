@@ -251,7 +251,7 @@ static int http_request(lua_State *L) {
 }
 
 static void http_checkURL_cb(lua_State *L, void* arg) {
-    lua_pushboolean(L, (int)arg);
+    lua_pushboolean(L, (int)(ptrdiff_t)arg);
 }
 
 static int http_checkURL(lua_State *L) {

@@ -10,6 +10,12 @@ extern void speaker_init(CSoundBaseDevice *m_Sound);
 
 CKernel* CKernel::kernel = nullptr;
 
+static const TNetDeviceType deviceTypes[] = {
+    NetDeviceTypeWLAN,
+    NetDeviceTypeEthernet,
+    NetDeviceTypeUnknown
+};
+
 CKernel::CKernel (void):
     m_Framebuffer (640, 400, 8, 640, 400),
     m_Timer (&m_Interrupt),
@@ -18,7 +24,7 @@ CKernel::CKernel (void):
     m_EMMC (&m_Interrupt, &m_Timer, &m_ActLED),
     m_Console (&m_Serial, &m_Serial),
     mpPartitionName ("SD:"),
-    m_DeviceType (m_Options.GetAppOptionDecimal("nettype", 0) == 0 ? NetDeviceTypeWLAN : NetDeviceTypeEthernet),
+    m_DeviceType (deviceTypes[m_Options.GetAppOptionDecimal("nettype", 0)]),
     m_WLAN ("SD:/firmware/"),
     m_Net(
         (const u8*)m_Options.GetAppOptionString("ipaddr"),
@@ -28,10 +34,14 @@ CKernel::CKernel (void):
         DEFAULT_HOSTNAME, m_DeviceType),
     m_WPASupplicant ("SD:/wpa_supplicant.conf"),
     m_DNSClient(&m_Net),
-    m_TLSSupport(&m_Net),
-    m_Sound(&m_Interrupt, 48000, 1024)
+    m_TLSSupport(&m_Net)
 {
     CKernel::kernel = this;
+    switch (m_Options.GetAppOptionDecimal("snddevice", 1)) {
+        case 0: m_Sound = new CPWMSoundBaseDevice(&m_Interrupt, 48000, 1024); break;
+        case 1: m_Sound = new CHDMISoundBaseDevice(&m_Interrupt, 48000, 1536); break;
+        default: m_Sound = NULL; break;
+    }
 }
 
 CKernel::~CKernel (void) {
@@ -113,31 +123,36 @@ boolean CKernel::Initialize (void) {
 
     hid_init();
 
-    if (m_DeviceType == NetDeviceTypeWLAN)
-    {
-        if (!m_WLAN.Initialize ())
+    if (m_DeviceType != NetDeviceTypeUnknown) {
+        if (m_DeviceType == NetDeviceTypeWLAN)
         {
-            terminal_write_literal(0, 0, "Failed to initialize WLAN", 0xE0);
+            if (!m_WLAN.Initialize ())
+            {
+                terminal_write_literal(0, 0, "Failed to initialize WLAN", 0xE0);
+                terminal_task();
+                return false;
+            }
+        }
+
+        if (!m_Net.Initialize (false))
+        {
+            terminal_write_literal(0, 0, "Failed to initialize network", 0xE0);
+            terminal_task();
             return false;
+        }
+
+        if (m_DeviceType == NetDeviceTypeWLAN)
+        {
+            if (!m_WPASupplicant.Initialize ())
+            {
+                terminal_write_literal(0, 0, "Failed to initialize WPA supplicant", 0xE0);
+                terminal_task();
+                return false;
+            }
         }
     }
 
-    if (!m_Net.Initialize (false))
-    {
-        terminal_write_literal(0, 0, "Failed to initialize network", 0xE0);
-        return false;
-    }
-
-    if (m_DeviceType == NetDeviceTypeWLAN)
-    {
-        if (!m_WPASupplicant.Initialize ())
-        {
-            terminal_write_literal(0, 0, "Failed to initialize WPA supplicant", 0xE0);
-            return false;
-        }
-    }
-
-    speaker_init(&m_Sound);
+    speaker_init(m_Sound);
 
     //CIPAddress ip((const u8*)"192.168.7.78");
     //new CSysLogDaemon(&m_Net, ip);
