@@ -5,18 +5,19 @@
 #include "terminal.hpp"
 #include "font.h"
 
-#define SCREEN_WIDTH 53
-#define SCREEN_HEIGHT 22
-#define SCREEN_SIZE (SCREEN_WIDTH*SCREEN_HEIGHT)
+int TERM_WIDTH = 53, TERM_HEIGHT = 22, SCREEN_SIZE = TERM_WIDTH * TERM_HEIGHT;
+#define SCREEN_WIDTH TERM_WIDTH
+#define SCREEN_HEIGHT TERM_HEIGHT
 
 static const char blinkTimerID = 'b';
-static uint8_t screen[SCREEN_SIZE];
-static uint8_t colors[SCREEN_SIZE];
+static uint8_t * screen;
+static uint8_t * colors;
 static TKernelTimerHandle timer;
 static int cursorX = 0, cursorY = 0;
 static bool cursorOn = false;
 static int8_t cursorColor = -1;
 static bool changed = true;
+static int term_stride = 640;
 
 #define COLOR32R(b, g, r, a) COLOR32(r, g, b, a)
 
@@ -55,7 +56,7 @@ void terminal_task() {
     if (changed) {
         changed = false;
         for (int y = 0; y < SCREEN_HEIGHT * 18; y++) {
-            uint8_t* line = CKernel::kernel->framebuffer + (y * 640);
+            uint8_t* line = CKernel::kernel->framebuffer + (y * term_stride);
             for (int x = 0; x < SCREEN_WIDTH * 12; x+=2) {
                 const int cp = (y / 18) * SCREEN_WIDTH + (x / 12);
                 const uint8_t c = screen[cp];
@@ -68,7 +69,13 @@ void terminal_task() {
     //timer = CTimer::Get()->StartKernelTimer(MSEC2HZ(50), terminal_task);
 }
 
-void terminal_init(void) {
+void terminal_init(int width, int height, int stride) {
+    TERM_WIDTH = width;
+    TERM_HEIGHT = height;
+    SCREEN_SIZE = width * height;
+    term_stride = stride;
+    screen = new uint8_t[SCREEN_SIZE];
+    colors = new uint8_t[SCREEN_SIZE];
     memcpy(palette, defaultPalette, sizeof(defaultPalette));
     CKernel::kernel->WritePalette(palette);
     CTimer::Get()->RegisterPeriodicHandler(terminal_task);

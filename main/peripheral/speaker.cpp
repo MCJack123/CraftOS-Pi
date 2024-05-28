@@ -4,11 +4,13 @@ extern "C" {
 #include <circle/alloc.h>
 #include "../event.hpp"
 
+#define SPEAKER_EXTRA_BUFFER 4096
+
 static CSoundBaseDevice *sound;
 static bool sentEvent = false;
 
 static void speaker_need_data(void* ud) {
-    if (sentEvent || sound->GetQueueFramesAvail() > 1024) return;
+    if (sentEvent || sound->GetQueueFramesAvail() > SPEAKER_EXTRA_BUFFER) return;
     event_t ev;
     ev.type = EVENT_TYPE_SPEAKER_AUDIO_EMPTY;
     event_push(&ev);
@@ -17,7 +19,7 @@ static void speaker_need_data(void* ud) {
 
 void speaker_init(CSoundBaseDevice *m_Sound) {
     sound = m_Sound;
-    sound->AllocateQueueFrames(131072 + 1024);
+    sound->AllocateQueueFrames(131072 + SPEAKER_EXTRA_BUFFER);
     sound->SetWriteFormat(SoundFormatUnsigned8, 2);
     sound->RegisterNeedDataCallback(speaker_need_data, NULL);
 }
@@ -33,7 +35,7 @@ static int speaker_playSound(lua_State *L) {
 static int speaker_playAudio(lua_State *L) {
     luaL_checktype(L, 1, LUA_TTABLE);
     int nsamples = lua_rawlen(L, 1);
-    if (nsamples == 0 || nsamples > sound->GetQueueSizeFrames()) {
+    if (nsamples == 0 || nsamples > sound->GetQueueSizeFrames() - SPEAKER_EXTRA_BUFFER) {
         luaL_error(L, "Too many samples");
     }
     if (sound->GetQueueSizeFrames() - sound->GetQueueFramesAvail() < nsamples) {

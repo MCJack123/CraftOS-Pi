@@ -261,10 +261,21 @@ static void hid_host_keyboard_report_callback(unsigned char modifier, const unsi
     prev_report_modifier = modifier;
 }
 
+static bool setTimer = false, setHandler = false;
+
+static void device_removed(CDevice *dev, void *ud) {
+    setHandler = false;
+}
+
 void hid_init(void) {
+    if (setHandler) return;
     CUSBKeyboardDevice * kbd = (CUSBKeyboardDevice*)CDeviceNameService::Get()->GetDevice("ukbd1", false);
     if (kbd == NULL) return;
     //kbd->Initialize();
     kbd->RegisterKeyStatusHandlerRaw(hid_host_keyboard_report_callback, false);
+    kbd->RegisterRemovedHandler(device_removed);
+    setHandler = true;
+    if (setTimer) return;
     CTimer::Get()->StartKernelTimer(MSEC2HZ(100), repeat_timer);
+    setTimer = true;
 }

@@ -2,15 +2,14 @@
 #define TERMINAL_H
 #include "../common.hpp"
 
-#define TERM_WIDTH 53
-#define TERM_HEIGHT 22
+extern int TERM_WIDTH, TERM_HEIGHT;
 #define NO_CURSOR -1
 
 extern const uint32_t defaultPalette[16];
 extern uint32_t palette[16];
 
 extern void terminal_task(void);
-extern void terminal_init(void);
+extern void terminal_init(int width, int height, int stride);
 extern void terminal_deinit(void);
 extern void terminal_clear(int line, uint8_t colors);
 extern void terminal_scroll(int lines, uint8_t colors);

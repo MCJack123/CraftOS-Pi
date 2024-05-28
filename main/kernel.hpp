@@ -26,6 +26,7 @@
 #include <wlan/hostap/wpa_supplicant/wpasupplicant.h>
 #include <circle/sound/hdmisoundbasedevice.h>
 #include <circle/sound/pwmsoundbasedevice.h>
+#include <circle/cputhrottle.h>
 
 enum TShutdownMode {
     ShutdownNone,
@@ -36,6 +37,7 @@ enum TShutdownMode {
 static void logTerm();
 class CKernel {
     friend void logTerm();
+    friend class USBTask;
 public:
     CKernel (void);
     ~CKernel (void);
@@ -69,6 +71,8 @@ public:
     uint8_t*                framebuffer;
 
 private:
+    int                     m_Width;
+    int                     m_Height;
     CActLED                 m_ActLED;
     CKernelOptions          m_Options;
     CDeviceNameService      m_DeviceNameService;
@@ -93,6 +97,7 @@ private:
     CDNSClient              m_DNSClient;
     CircleMbedTLS::CTLSSimpleSupport m_TLSSupport;
     CSoundBaseDevice       *m_Sound;
+    CCPUThrottle            m_Throttle;
 };
 
 #endif

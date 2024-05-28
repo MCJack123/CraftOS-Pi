@@ -167,10 +167,8 @@ int fs_handle_readAllByte(lua_State *L) {
 int fs_handle_writeString(lua_State *L) {
     FILE * fp = *(FILE**)lua_touserdata(L, lua_upvalueindex(1));
     if (fp == NULL) luaL_error(L, "attempt to use a closed file");
-    if (lua_isnoneornil(L, 1)) return 0;
-    else if (!lua_isstring(L, 1) && !lua_isnumber(L, 1)) luaL_argerror(L, 1, "string expected");
     size_t sz = 0;
-    const char * str = lua_tolstring(L, 1, &sz);
+    const char * str = luaL_checklstring(L, 1, &sz);
     fwrite(str, sz, 1, fp);
     return 0;
 }
@@ -178,10 +176,8 @@ int fs_handle_writeString(lua_State *L) {
 int fs_handle_writeLine(lua_State *L) {
     FILE * fp = *(FILE**)lua_touserdata(L, lua_upvalueindex(1));
     if (fp == NULL) luaL_error(L, "attempt to use a closed file");
-    if (lua_isnoneornil(L, 1)) return 0;
-    else if (!lua_isstring(L, 1) && !lua_isnumber(L, 1)) luaL_argerror(L, 1, "string expected");
     size_t sz = 0;
-    const char * str = lua_tolstring(L, 1, &sz);
+    const char * str = luaL_checklstring(L, 1, &sz);
     fwrite(str, sz, 1, fp);
     fputc('\n', fp);
     return 0;
@@ -194,8 +190,10 @@ int fs_handle_writeByte(lua_State *L) {
         const char b = (unsigned char)(lua_tointeger(L, 1) & 0xFF);
         fputc(b, fp);
     } else if (lua_isstring(L, 1)) {
-        if (lua_rawlen(L, 1) == 0) return 0;
-        fwrite(lua_tostring(L, 1), lua_rawlen(L, 1), 1, fp);
+        size_t sz;
+        const char* str = lua_tolstring(L, 1, &sz);
+        if (sz == 0) return 0;
+        fwrite(str, sz, 1, fp);
     } else luaL_argerror(L, 1, "number or string expected");
     return 0;
 }
