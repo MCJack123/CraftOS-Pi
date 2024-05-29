@@ -65,11 +65,13 @@ void terminal_task() {
             int cx = cursorX;
             if (cursorOn && y >> 1 == cursorY * 9 + 7 && cx >= 0 && cx < TERM_WIDTH) memset(line + cx * 12, cursorColor, 12);
         }
+        CKernel::kernel->WritePalette(palette);
     }
     //timer = CTimer::Get()->StartKernelTimer(MSEC2HZ(50), terminal_task);
 }
 
 void terminal_init(int width, int height, int stride) {
+    CKernel::kernel->LogD("terminal", "Terminal size = %dx%d (%d stride)", width, height, stride);
     TERM_WIDTH = width;
     TERM_HEIGHT = height;
     SCREEN_SIZE = width * height;
@@ -120,8 +122,8 @@ void terminal_scroll(int lines, uint8_t col) {
 void terminal_write(int x, int y, const uint8_t* text, int len, uint8_t col) {
     if (y < 0 || y >= SCREEN_HEIGHT || x >= SCREEN_WIDTH) return;
     if (x < 0) {
-        text += x;
-        len -= x;
+        text -= x;
+        len += x;
         x = 0;
     }
     if (len <= 0) return;
@@ -135,9 +137,9 @@ void terminal_write(int x, int y, const uint8_t* text, int len, uint8_t col) {
 void terminal_blit(int x, int y, const uint8_t* text, const uint8_t* col, int len) {
     if (y < 0 || y >= SCREEN_HEIGHT || x >= SCREEN_WIDTH) return;
     if (x < 0) {
-        text += x;
-        col += x;
-        len -= x;
+        text -= x;
+        col -= x;
+        len += x;
         x = 0;
     }
     if (len <= 0) return;
@@ -153,5 +155,10 @@ void terminal_cursor(int8_t color, int x, int y) {
     cursorX = x;
     cursorY = y;
     if (cursorColor < 0) cursorOn = false;
+    changed = true;
+}
+
+void terminal_setPalette(uint8_t color, uint8_t r, uint8_t g, uint8_t b) {
+    palette[color] = COLOR32(b, g, r, 0xFF);
     changed = true;
 }

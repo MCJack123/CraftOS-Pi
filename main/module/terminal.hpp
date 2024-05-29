@@ -18,5 +18,6 @@ extern void terminal_write(int x, int y, const uint8_t* text, int len, uint8_t c
 #define terminal_write_literal(x, y, text, colors) terminal_write(x, y, (const uint8_t*)text, sizeof(text)-1, colors)
 extern void terminal_blit(int x, int y, const uint8_t* text, const uint8_t* colors, int len);
 extern void terminal_cursor(int8_t color, int x, int y);
+extern void terminal_setPalette(uint8_t color, uint8_t r, uint8_t g, uint8_t b);
 
 #endif

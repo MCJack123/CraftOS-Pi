@@ -168,8 +168,7 @@ int term_setPaletteColor(lua_State *L) {
         gg = (rgb >> 8) & 0xFF;
         bb = rgb & 0xFF;
     }
-    palette[color] = COLOR32(bb, gg, rr, 0xFF);
-    CKernel::kernel->WritePalette(palette);
+    terminal_setPalette(color, rr, gg, bb);
     return 0;
 }
 

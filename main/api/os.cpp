@@ -48,7 +48,7 @@ int os_queueEvent(lua_State *L) {
 }
 
 int os_clock(lua_State *L) {
-    lua_pushinteger(L, CTimer::Get()->GetUptime());
+    lua_pushnumber(L, (double)(CTimer::Get()->GetClockTicks64() / 1000) / 1000.0);
     return 1;
 }
 
@@ -132,7 +132,7 @@ int os_epoch(lua_State *L) {
     const char * type = "ingame";
     if (lua_gettop(L) > 0) type = lua_tostring(L, 1);
     if (strcmp(type, "utc") == 0) {
-        lua_pushnumber(L, CTimer::Get()->GetUniversalTime() * 1000);
+        lua_pushnumber(L, CTimer::Get()->GetClockTicks64() / 1000);
     } else if (strcmp(type, "local") == 0) {
         time_t t = time(NULL);
         lua_pushnumber(L, CTimer::Get()->GetLocalTime() * 1000);

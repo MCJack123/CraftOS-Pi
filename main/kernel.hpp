@@ -71,10 +71,10 @@ public:
     uint8_t*                framebuffer;
 
 private:
-    int                     m_Width;
-    int                     m_Height;
     CActLED                 m_ActLED;
     CKernelOptions          m_Options;
+    int                     m_Width;
+    int                     m_Height;
     CDeviceNameService      m_DeviceNameService;
     CBcmFrameBuffer         m_Framebuffer;
     CSerialDevice           m_Serial;
