@@ -1,5 +1,4 @@
 #include "kernel.hpp"
-#include "hid.hpp"
 #include "event.hpp"
 #include <ff.h>
 #include <craftos.h>
@@ -13,6 +12,7 @@ const char * speaker_types[] = {"speaker", NULL};
 extern const craftos_func_t funcs;
 extern unsigned int craftos_terminal_defaultPalette[16];
 extern void speaker_init(CSoundBaseDevice *m_Sound);
+extern void hid_init(void);
 
 CKernel* CKernel::kernel = nullptr;
 

@@ -1,6 +1,9 @@
 #ifndef EVENT_H
 #define EVENT_H
-#include "common.hpp"
+extern "C" {
+#include <lua.h>
+}
+#include "kernel.hpp"
 
 typedef enum {
     EVENT_TYPE_NONE,

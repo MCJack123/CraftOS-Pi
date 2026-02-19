@@ -5,6 +5,7 @@ extern "C" {
 #include <lauxlib.h>
 }
 #include <stdlib.h>
+#include <errno.h>
 #include <craftos.h>
 #include <craftos_fatfs.h>
 #include <circle/timer.h>
