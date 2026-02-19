@@ -27,6 +27,7 @@
 #include <circle/sound/hdmisoundbasedevice.h>
 #include <circle/sound/pwmsoundbasedevice.h>
 #include <circle/cputhrottle.h>
+#include <craftos.h>
 
 enum TShutdownMode {
     ShutdownNone,
@@ -69,6 +70,8 @@ private:
 
 public:
     uint8_t*                framebuffer;
+    craftos_machine_t       machine;
+    size_t                  framebufferPitch;
 
 private:
     CActLED                 m_ActLED;

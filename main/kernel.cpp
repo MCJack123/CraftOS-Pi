@@ -1,13 +1,17 @@
 #include "kernel.hpp"
-#include "module/terminal.hpp"
-#include "driver/hid.hpp"
+#include "hid.hpp"
+#include "event.hpp"
 #include <ff.h>
+#include <craftos.h>
 #include <circle_glue.h>
 #include <circle/net/syslogdaemon.h>
 
 extern uintptr IRQReturnAddress;
+extern "C" const luaL_Reg speaker_methods[];
+const char * speaker_types[] = {"speaker", NULL};
 
-extern void machine_main(void*);
+extern const craftos_func_t funcs;
+extern unsigned int craftos_terminal_defaultPalette[16];
 extern void speaker_init(CSoundBaseDevice *m_Sound);
 
 CKernel* CKernel::kernel = nullptr;
@@ -53,6 +57,17 @@ CKernel::~CKernel (void) {
 
 }
 
+static void terminal_task() {
+    craftos_terminal_render(CKernel::kernel->machine->term, CKernel::kernel->framebuffer, CKernel::kernel->framebufferPitch, 8, 2, 2);
+    uint32_t palette[16];
+    for (int i = 0; i < 16; i++) {
+        uint32_t c = CKernel::kernel->machine->term->palette[i];
+        palette[i] = (c & 0xFF) << 16 | (c & 0xFF00) | (c & 0xFF0000) >> 16 | 0xFF000000;
+    }
+    CKernel::kernel->WritePalette(palette);
+    CKernel::kernel->SetLED(CKernel::kernel->machine->term->blink);
+}
+
 static int logY = 0;
 static void logTerm() {
     TLogSeverity level;
@@ -69,20 +84,20 @@ static void logTerm() {
             case LogError: colors = 0xFE; break;
             case LogPanic: colors = 0xF2; break;
         }
-        if (logY >= TERM_HEIGHT) {
-            terminal_scroll(1, 0xF0);
+        if (logY >= CKernel::kernel->machine->term->height) {
+            //craftos_terminal_scroll(1, 0xF0);
             logY--;
         }
-        terminal_write_string(0, logY++, message, colors);
+        craftos_terminal_write_string(CKernel::kernel->machine->term, 0, logY++, message, colors);
     }
     terminal_task(); // force render
 }
 
 static void panicTerm() {
-    terminal_clear(-1, 0xF0);
+    //craftos_terminal_clear(-1, 0xF0);
     logY = 1;
     logTerm();
-    terminal_write_literal(0, 0, "CraftOS-Pi has crashed!", 0xFE);
+    craftos_terminal_write_literal(CKernel::kernel->machine->term, 0, 0, "CraftOS-Pi has crashed!", 0xFE);
     terminal_task(); // force render
 }
 
@@ -91,10 +106,10 @@ class USBTask: public CTask {
 
     static void throttleTimer() {
         CKernel::kernel->m_Throttle.Update();
-        char buf[TERM_WIDTH];
-        memset(buf, 0, TERM_WIDTH);
+        char buf[CKernel::kernel->machine->term->width];
+        memset(buf, 0, CKernel::kernel->machine->term->width);
         sprintf(buf, "%d C, %d Hz, PC=%08x", CKernel::kernel->m_Throttle.GetTemperature(), CKernel::kernel->m_Throttle.GetClockRate(), IRQReturnAddress);
-        terminal_write(0, TERM_HEIGHT - 1, (uint8_t*)buf, TERM_WIDTH, 0xF9);
+        craftos_terminal_write(CKernel::kernel->machine->term, 0, CKernel::kernel->machine->term->height - 1, buf, CKernel::kernel->machine->term->width, 0xF9);
     }
 
 public:
@@ -118,12 +133,13 @@ boolean CKernel::Initialize (void) {
     if (bOK) { bOK = m_Logger.Initialize(&m_Serial); }
 
     if (bOK) {
-        for (int i = 0; i < 16; i++) m_Framebuffer.SetPalette32(i, defaultPalette[i]);
+        for (int i = 0; i < 16; i++) m_Framebuffer.SetPalette32(i, craftos_terminal_defaultPalette[i]);
         bOK = m_Framebuffer.Initialize();
     }
 
     framebuffer = (uint8_t*)(uintptr_t)m_Framebuffer.GetBuffer();
     memset(framebuffer, 15, m_Framebuffer.GetSize());
+    framebufferPitch = m_Framebuffer.GetPitch();
 
     if (bOK) { bOK = m_Interrupt.Initialize(); }
 
@@ -150,10 +166,24 @@ boolean CKernel::Initialize (void) {
     // Initialize newlib stdio with a reference to Circle's console
     CGlueStdioInit(m_Console);
 
-    terminal_init(m_Width / 12, m_Height / 18, m_Framebuffer.GetPitch());
-    //terminal_write_literal(0, 0, "Starting CraftOS-Pi...", 0xF0);
+    craftos_machine_config config;
+    config.id = 0;
+    config.label = NULL;
+    config.rom_mmfs = NULL;
+    config.bios = NULL;
+    config.width = m_Width;
+    config.height = m_Height;
+    config.size_pixel_scale = 2;
+    config.base_path = "/";
+    if (craftos_init(&funcs) != 0) return false;
+    machine = craftos_machine_create(&config);
+    if (machine == NULL) return false;
+
+    CTimer::Get()->RegisterPeriodicHandler(terminal_task);
+    craftos_terminal_write_literal(machine->term, 0, 0, "Starting CraftOS-Pi...", 0xF0);
     m_Logger.Write("main", LogNotice, "Terminal framebuffer at %p, size %u", framebuffer, m_Framebuffer.GetSize());
     m_Logger.RegisterPanicHandler(panicTerm);
+    craftos_machine_peripheral_attach(machine, "left", speaker_types, speaker_methods, NULL);
 
     hid_init();
 
@@ -162,7 +192,7 @@ boolean CKernel::Initialize (void) {
         {
             if (!m_WLAN.Initialize ())
             {
-                terminal_write_literal(0, 0, "Failed to initialize WLAN", 0xE0);
+                craftos_terminal_write_literal(machine->term, 0, 0, "Failed to initialize WLAN", 0xE0);
                 terminal_task();
                 return false;
             }
@@ -170,7 +200,7 @@ boolean CKernel::Initialize (void) {
 
         if (!m_Net.Initialize (false))
         {
-            terminal_write_literal(0, 0, "Failed to initialize network", 0xE0);
+            craftos_terminal_write_literal(machine->term, 0, 0, "Failed to initialize network", 0xE0);
             terminal_task();
             return false;
         }
@@ -179,7 +209,7 @@ boolean CKernel::Initialize (void) {
         {
             if (!m_WPASupplicant.Initialize ())
             {
-                terminal_write_literal(0, 0, "Failed to initialize WPA supplicant", 0xE0);
+                craftos_terminal_write_literal(machine->term, 0, 0, "Failed to initialize WPA supplicant", 0xE0);
                 terminal_task();
                 return false;
             }
@@ -199,8 +229,61 @@ boolean CKernel::Initialize (void) {
 }
 
 TShutdownMode CKernel::Run (void) {
-    machine_main((void*)0);
-    return TShutdownMode::ShutdownHalt;
+    while (true) {
+        craftos_status_t status = craftos_machine_run(machine);
+        if (status == CRAFTOS_MACHINE_STATUS_SHUTDOWN) {
+            craftos_machine_destroy(machine);
+            return TShutdownMode::ShutdownHalt;
+        } else if (status == CRAFTOS_MACHINE_STATUS_RESTART) {
+            craftos_machine_destroy(machine);
+            return TShutdownMode::ShutdownReboot;
+        } else if (status == CRAFTOS_MACHINE_STATUS_ERROR) {
+            break;
+        } else if (status == CRAFTOS_MACHINE_STATUS_YIELD) {
+            event_t ev;
+            event_wait(&ev);
+            switch (ev.type) {
+                case EVENT_TYPE_KEY:
+                    craftos_event_key(machine, ev.key.keycode, ev.key.repeat);
+                    break;
+                case EVENT_TYPE_KEY_UP:
+                    craftos_event_key_up(machine, ev.key.keycode);
+                    break;
+                case EVENT_TYPE_CHAR:
+                    craftos_event_char(machine, ev.character.c);
+                    break;
+                case EVENT_TYPE_TIMER: case EVENT_TYPE_ALARM:
+                    craftos_event_timer(machine, ev.timer.timerID);
+                    break;
+                case EVENT_TYPE_DISK: case EVENT_TYPE_DISK_EJECT:
+                    craftos_machine_queue_event(machine, ev.type == EVENT_TYPE_DISK ? "disk" : "disk_eject", "z", "right");
+                    break;
+                case EVENT_TYPE_SPEAKER_AUDIO_EMPTY:
+                    craftos_machine_queue_event(machine, "speaker_audio_empty", "z", "left");
+                    break;
+                case EVENT_TYPE_MODEM_MESSAGE:
+                    /*
+                    ev.modem.message_fn(L, ev.modem.message_arg);
+                    craftos_machine_queue_event(machine, "modem_message", "zHHvf", "back", ev.modem.channel, ev.modem.replyChannel, L, ev.modem.distance);
+                    */
+                    break;
+                case EVENT_TYPE_HTTP_FAILURE:
+                    craftos_event_http_failure(machine, ev.http.url, ev.http.err);
+                    break;
+                case EVENT_TYPE_HTTP_SUCCESS:
+                    craftos_event_http_success(machine, ev.http.url, ev.http.handle_arg);
+                    break;
+                case EVENT_TYPE_HTTP_CHECK:
+                case EVENT_TYPE_WEBSOCKET_CLOSED:
+                case EVENT_TYPE_WEBSOCKET_FAILURE:
+                case EVENT_TYPE_WEBSOCKET_MESSAGE:
+                case EVENT_TYPE_WEBSOCKET_SUCCESS:
+                    break;
+            }
+        }
+    }
+    craftos_machine_destroy(machine);
+    return TShutdownMode::ShutdownNone;
 }
 
 void CKernel::LogD(const char * subsystem, const char * fmt, ...) {

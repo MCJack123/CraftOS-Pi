@@ -1,7 +1,7 @@
 #include <string.h>
 #include <circle/timer.h>
 #include <circle/startup.h>
-#include "../event.hpp"
+#include "event.hpp"
 
 #define HID_LEFT_CTRL       0x01
 #define HID_LEFT_SHIFT      0x02

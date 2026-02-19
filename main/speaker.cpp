@@ -2,7 +2,7 @@ extern "C" {
 #include <lauxlib.h>
 }
 #include <circle/alloc.h>
-#include "../event.hpp"
+#include "event.hpp"
 
 #define SPEAKER_EXTRA_BUFFER 4096
 
@@ -33,6 +33,7 @@ static int speaker_playSound(lua_State *L) {
 }
 
 static int speaker_playAudio(lua_State *L) {
+    lua_remove(L, 1);
     luaL_checktype(L, 1, LUA_TTABLE);
     int nsamples = lua_rawlen(L, 1);
     if (nsamples == 0 || nsamples > sound->GetQueueSizeFrames() - SPEAKER_EXTRA_BUFFER) {

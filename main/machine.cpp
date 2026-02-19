@@ -5,176 +5,245 @@ extern "C" {
 #include <lauxlib.h>
 }
 #include <stdlib.h>
+#include <craftos.h>
+#include <craftos_fatfs.h>
 #include <circle/timer.h>
 #include <circle/startup.h>
 //#include "driver/wifi.hpp"
 #include "event.hpp"
-#include "module/terminal.hpp"
+#include "httpclient.hpp"
 
-static const char* eventNames[] = {
-    "",
-    "key",
-    "key_up",
-    "char",
-    "timer",
-    "alarm",
-    "disk",
-    "disk_eject",
-    "http_check",
-    "http_success",
-    "http_failure",
-    "modem_message",
-    "paste",
-    "redstone",
-    "speaker_audio_empty",
-    "terminate",
-    "websocket_closed",
-    "websocket_failure",
-    "websocket_message",
-    "websocket_success",
-    "wifi_connected",
-    "wifi_disconnected",
-    "wifi_scan",
+typedef struct timer {
+    int id;
+    TKernelTimerHandle timer;
+    struct timer* next;
+} timer_ll_t;
+
+static int nextTimerID = 0;
+static timer_ll_t* timer_ll_head = NULL, *timer_ll_tail = NULL;
+
+static double timestamp() {
+    return CTimer::Get()->GetTime() * 1000.0 + (CTimer::Get()->GetClockTicks() / 1000) % 1000;
+}
+
+static unsigned long convertPixelValue(unsigned char index, unsigned char r, unsigned char g, unsigned char b) {
+    return index;
+}
+
+static void timer(TKernelTimerHandle hTimer, void *pParam, void *pContext) {
+    int id = (int)(ptrdiff_t)pParam;
+    event_t event;
+    event.type = EVENT_TYPE_TIMER;
+    event.timer.timerID = id;
+    event_push(&event);
+    timer_ll_t* tm = timer_ll_head, *last = NULL;
+    while (tm) {
+        if (tm->id == id) {
+            if (last) last->next = tm->next;
+            if (timer_ll_head == tm) timer_ll_head = tm->next;
+            if (timer_ll_tail == tm) timer_ll_tail = last;
+            free(tm);
+            //CTimer::Get()->CancelKernelTimer(hTimer);
+            return;
+        }
+        last = tm;
+        tm = tm->next;
+    }
+}
+
+static int startTimer(unsigned long time, craftos_machine_t machine) {
+    int id = nextTimerID++;
+    int ticks = MSEC2HZ(time);
+    if (ticks <= 0) {
+        event_t event;
+        event.type = EVENT_TYPE_TIMER;
+        event.timer.timerID = id;
+        event_push(&event);
+    } else {
+        TKernelTimerHandle handle = CTimer::Get()->StartKernelTimer(ticks, timer, (void*)(ptrdiff_t)id);
+        timer_ll_t* tm = (timer_ll_t*)malloc(sizeof(timer_ll_t));
+        tm->id = id;
+        tm->timer = handle;
+        tm->next = NULL;
+        if (timer_ll_tail) timer_ll_tail->next = tm;
+        else timer_ll_head = tm;
+        timer_ll_tail = tm;
+    }
+    return id;
+}
+
+static void cancelTimer(int id, craftos_machine_t machine) {
+    timer_ll_t* tm = timer_ll_head, *last = NULL;
+    while (tm) {
+        if (tm->id == id) {
+            CTimer::Get()->CancelKernelTimer(tm->timer);
+            if (last) last->next = tm->next;
+            if (timer_ll_head == tm) timer_ll_head = tm->next;
+            if (timer_ll_tail == tm) timer_ll_tail = last;
+            free(tm);
+            return;
+        }
+        last = tm;
+        tm = tm->next;
+    }
+}
+
+struct http_handle_t {
+    CHTTPClient handle;
+    char* url;
+    const char* data = NULL;
+    size_t dataLength = 0;
+    size_t readPos = 0;
+    http_handle_t(CircleMbedTLS::CTLSSimpleSupport *pTLSSupport, CDNSClient* dns, const char *url): handle(pTLSSupport, dns, url) {
+        this->url = new char[strlen(url)+1];
+        strcpy(this->url, url);
+    }
+    ~http_handle_t() {
+        delete[] url;
+    }
 };
 
-extern "C" {
-extern const luaL_Reg fs_lib[];
-extern const luaL_Reg http_lib[];
-extern const luaL_Reg os_lib[];
-extern const luaL_Reg peripheral_lib[];
-extern const luaL_Reg rs_lib[];
-extern const luaL_Reg term_lib[];
-//extern const luaL_Reg wifi_lib[];
-}
+class HTTPTask: public CTask {
+public:
+    HTTPTask(http_handle_t* handle, const char* data, size_t len): m_pHandle(handle), m_pData(data), m_nSize(len) {}
 
-lua_State *paramQueue;
-
-static int getNextEvent(lua_State *L, const char * filter) {
-    lua_State *event = NULL;
-    do {
-        if (event) lua_remove(paramQueue, 1);
-        while (lua_gettop(paramQueue) == 0) {
+    virtual void Run() override {
+        if (m_pHandle->handle.SendRequest(m_pData, m_nSize) < 0) {
             event_t ev;
-            event_wait(&ev);
-            event = lua_newthread(paramQueue);
-            lua_pushstring(event, eventNames[ev.type]);
-            switch (ev.type) {
-                case EVENT_TYPE_KEY: case EVENT_TYPE_KEY_UP:
-                    lua_pushinteger(event, ev.key.keycode);
-                    if (ev.type == EVENT_TYPE_KEY) lua_pushboolean(event, ev.key.repeat);
-                    break;
-                case EVENT_TYPE_CHAR:
-                    lua_pushlstring(event, &ev.character.c, 1);
-                    break;
-                case EVENT_TYPE_TIMER: case EVENT_TYPE_ALARM:
-                    lua_pushinteger(event, ev.timer.timerID);
-                    break;
-                case EVENT_TYPE_DISK: case EVENT_TYPE_DISK_EJECT:
-                    lua_pushliteral(event, "right");
-                    break;
-                case EVENT_TYPE_SPEAKER_AUDIO_EMPTY:
-                    lua_pushliteral(event, "left");
-                    break;
-                case EVENT_TYPE_MODEM_MESSAGE:
-                    lua_checkstack(event, 10);
-                    lua_pushliteral(event, "back");
-                    lua_pushinteger(event, ev.modem.channel);
-                    lua_pushinteger(event, ev.modem.replyChannel);
-                    ev.modem.message_fn(event, ev.modem.message_arg);
-                    lua_pushnumber(event, ev.modem.distance);
-                    break;
-                case EVENT_TYPE_HTTP_FAILURE: case EVENT_TYPE_HTTP_SUCCESS: case EVENT_TYPE_HTTP_CHECK:
-                case EVENT_TYPE_WEBSOCKET_CLOSED: case EVENT_TYPE_WEBSOCKET_FAILURE:
-                case EVENT_TYPE_WEBSOCKET_MESSAGE: case EVENT_TYPE_WEBSOCKET_SUCCESS:
-                    lua_pushstring(event, ev.http.url);
-                    if (ev.type == EVENT_TYPE_HTTP_CHECK) free(ev.http.url);
-                    if (ev.http.err) lua_pushstring(event, ev.http.err);
-                    if (ev.http.handle_fn) ev.http.handle_fn(event, ev.http.handle_arg);
-                    break;
+            ev.type = EVENT_TYPE_HTTP_FAILURE;
+            ev.http.url = m_pHandle->url;
+            ev.http.err = strerror(errno);
+            ev.http.handle_fn = NULL;
+            event_push(&ev);
+        } else {
+            m_pHandle->dataLength = m_pHandle->handle.GetResponse(&m_pHandle->data);
+            event_t ev;
+            ev.http.url = m_pHandle->url;
+            if (m_pHandle->handle.GetResponseCode() >= 400) {
+                ev.type = EVENT_TYPE_HTTP_FAILURE;
+                ev.http.err = m_pHandle->handle.GetResponseMessage();
+            } else {
+                ev.type = EVENT_TYPE_HTTP_SUCCESS;
+                ev.http.err = NULL;
             }
+            ev.http.handle_arg = m_pHandle;
+            event_push(&ev);
         }
-        event = lua_tothread(paramQueue, 1);
-    } while (filter != NULL && strcmp(lua_tostring(event, 1), filter) != 0 && strcmp(lua_tostring(event, 1), "terminate") != 0);
-    int count = lua_gettop(event);
-    lua_xmove(event, L, count);
-    lua_remove(paramQueue, 1);
-    return count;
+    }
+
+private:
+    http_handle_t *m_pHandle;
+    const char *m_pData;
+    size_t m_nSize;
+};
+
+static int http_request(const char * url, const char * method, const unsigned char * body, size_t body_size, craftos_http_header_t * headers, int redirect, craftos_machine_t machine) {
+    if (!CNetSubSystem::Get()->IsRunning()) {
+        return -1;
+    }
+    http_handle_t * handle = new http_handle_t(CKernel::kernel->TLSSimpleSupport(), CKernel::kernel->DNSClient(), url);
+    handle->handle.SetMethod(method);
+    handle->handle.SetAutoRedirect(redirect);
+    for (int i = 0; headers[i].key; i++) {
+        handle->handle.AddHeader(headers[i].key, headers[i].value);
+    }
+    new HTTPTask(handle, (const char*)body, body_size);
+    return 0;
 }
 
-void machine_main(void*) {
-    int status;
-    lua_State *L;
-    lua_State *coro;
-    /*
-     * All Lua contexts are held in this structure. We work with it almost
-     * all the time.
-     */
-    L = luaL_newstate();
-    
-    coro = lua_newthread(L);
-    paramQueue = lua_newthread(L);
-    
-    luaL_openlibs(coro);
-    lua_getglobal(coro, "os"); lua_getfield(coro, -1, "date");
-    lua_newtable(coro); luaL_setfuncs(coro, fs_lib, 0); lua_setglobal(coro, "fs");
-    lua_newtable(coro); luaL_setfuncs(coro, http_lib, 0); lua_setglobal(coro, "http");
-    lua_newtable(coro); luaL_setfuncs(coro, os_lib, 0); lua_pushvalue(coro, -2); lua_setfield(coro, -2, "date"); lua_setglobal(coro, "os");
-    lua_newtable(coro); luaL_setfuncs(coro, peripheral_lib, 0); lua_setglobal(coro, "peripheral");
-    lua_newtable(coro); luaL_setfuncs(coro, rs_lib, 0); lua_pushvalue(coro, -1); lua_setglobal(coro, "rs"); lua_setglobal(coro, "redstone");
-    lua_newtable(coro); luaL_setfuncs(coro, term_lib, 0); lua_setglobal(coro, "term");
-    //lua_newtable(coro); luaL_setfuncs(coro, wifi_lib, 0); lua_setglobal(coro, "wifi");
-    lua_pop(coro, 2);
-    
-    lua_pushliteral(coro, "bios.use_multishell=false,shell.autocomplete=false");
-    lua_setglobal(coro, "_CC_DEFAULT_SETTINGS");
-    lua_pushliteral(coro, "ComputerCraft 1.109.2 (CraftOS-Pi 1.0)");
-    lua_setglobal(coro, "_HOST");
-    lua_pushnil(coro); lua_setglobal(coro, "package");
-    lua_pushnil(coro); lua_setglobal(coro, "require");
-    lua_pushnil(coro); lua_setglobal(coro, "io");
-    //srand(CTimer::GetClockTicks());
-    
-    /* Load the file containing the script we are going to run */
-    printf("Loading BIOS...\n");
-    status = luaL_loadfile(coro, "/rom/bios.lua");
-    if (status) {
-        /* If something went wrong, error message is at the top of */
-        /* the stack */
-        const char * fullstr = lua_tostring(coro, -1);
-        printf("Couldn't load BIOS: %s (%d)\n", fullstr, status);
-        lua_close(L);
-        terminal_clear(-1, 0xFE);
-        terminal_write_literal(0, 0, "Error loading BIOS", 0xFE);
-        terminal_write_string(0, 1, fullstr, 0xFE);
-        terminal_write_literal(0, 2, "ComputerCraft may be installed incorrectly", 0xFE);
-        halt();
-    }
-    
-    /* Ask Lua to run our little script */
-    status = LUA_YIELD;
-    int narg = 0;
-    printf("Running main coroutine.\n");
-    while (status == LUA_YIELD) {
-        status = lua_resume(coro, NULL, narg);
-        if (status == LUA_YIELD) {
-            //printf("Yield\n");
-            if (lua_isstring(coro, -1)) narg = getNextEvent(coro, lua_tostring(coro, -1));
-            else narg = getNextEvent(coro, NULL);
-        } else if (status != 0) {
-            const char * fullstr = lua_tostring(coro, -1);
-            printf("Errored: %s\n", fullstr);
-            lua_close(L);
-            terminal_clear(-1, 0xFE);
-            terminal_write_literal(0, 0, "Error running computer", 0xFE);
-            terminal_write_string(0, 1, fullstr, 0xFE);
-            terminal_write_literal(0, 2, "ComputerCraft may be installed incorrectly", 0xFE);
-            halt();
-        }
-    }
-    printf("Closing session.\n");
-    lua_close(L);
-    terminal_clear(-1, 0xFE);
-    terminal_write_literal(0, 0, "Error running computer", 0xFE);
-    terminal_write_literal(0, 1, "ComputerCraft may be installed incorrectly", 0xFE);
-    halt();
+static int http_handle_close(craftos_http_handle_t handle, craftos_machine_t machine) {
+    delete (http_handle_t*)handle;
+    return 0;
 }
+
+static size_t http_handle_read(void * buf, size_t size, size_t count, craftos_http_handle_t _handle, craftos_machine_t machine) {
+    http_handle_t * handle = (http_handle_t*)_handle;
+    size_t n = size * count;
+    if (n > handle->dataLength - handle->readPos) n = handle->dataLength - handle->readPos;
+    memcpy(buf, handle->data + handle->readPos, n);
+    handle->readPos += n;
+    return n / size;
+}
+
+static int http_handle_getc(craftos_http_handle_t _handle, craftos_machine_t machine) {
+    http_handle_t * handle = (http_handle_t*)_handle;
+    if (handle->readPos >= handle->dataLength) return EOF;
+    return handle->data[handle->readPos++];
+}
+
+static long http_handle_tell(craftos_http_handle_t _handle, craftos_machine_t machine) {
+    http_handle_t * handle = (http_handle_t*)_handle;
+    return handle->readPos;
+}
+
+static int http_handle_seek(craftos_http_handle_t _handle, long offset, int origin, craftos_machine_t machine) {
+    http_handle_t * handle = (http_handle_t*)_handle;
+    switch (origin) {
+        case SEEK_SET:
+            if (offset < 0 || offset >= handle->dataLength) return -1;
+            handle->readPos = offset;
+            break;
+        case SEEK_CUR:
+            if (-offset > handle->readPos || offset >= handle->dataLength - handle->readPos) return -1;
+            handle->readPos += offset;
+            break;
+        case SEEK_END:
+            if (offset > 0 || -offset >= handle->dataLength) return -1;
+            handle->readPos = handle->dataLength - offset;
+            break;
+    }
+    return 0;
+}
+
+static int http_handle_eof(craftos_http_handle_t _handle, craftos_machine_t machine) {
+    http_handle_t * handle = (http_handle_t*)_handle;
+    return handle->readPos >= handle->dataLength;
+}
+
+static int http_handle_getResponseCode(craftos_http_handle_t _handle, craftos_machine_t machine) {
+    http_handle_t * handle = (http_handle_t*)_handle;
+    return handle->handle.GetResponseCode();
+}
+
+static void header_cb(void* arg, const char* key, const char* value) {
+    craftos_http_header_t ** header = (craftos_http_header_t**)arg;
+    if (*header == NULL) {
+        *header = new craftos_http_header_t {key, value};
+    } else if (strcmp((*header)->key, key) == 0) {
+        delete *header;
+        *header = NULL;
+    }
+}
+
+static void http_handle_getResponseHeader(craftos_http_handle_t _handle, craftos_http_header_t ** header, craftos_machine_t machine) {
+    http_handle_t * handle = (http_handle_t*)_handle;
+    handle->handle.GetResponseHeaders(header_cb, header);
+}
+
+extern const craftos_func_t funcs = {
+    timestamp,
+    convertPixelValue,
+    startTimer,
+    cancelTimer,
+    NULL,
+    NULL, NULL, 
+    NULL, NULL, NULL, 
+    NULL, NULL, NULL, NULL, 
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
+    craftos_fatfs_mkdir, craftos_fatfs_access, 
+    NULL, 
+    craftos_fatfs_statvfs, 
+    craftos_fatfs_opendir,
+    craftos_fatfs_closedir,
+    craftos_fatfs_readdir,
+    http_request,
+    http_handle_close,
+    http_handle_read,
+    http_handle_getc,
+    http_handle_tell,
+    http_handle_seek,
+    http_handle_eof,
+    http_handle_getResponseCode,
+    http_handle_getResponseHeader,
+    NULL, NULL, NULL
+};
